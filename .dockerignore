@@ -1,0 +1,19 @@
+# Build context for enclave/Containerfile is the repo root (see
+# enclave/Makefile). Everything here is safe to exclude: node_modules is
+# reinstalled inside the build (pnpm install --filter), and these
+# directories/files are irrelevant to the enclave image.
+.git
+**/node_modules
+**/dist
+# apps/executor/dist/start.mjs is a build input, not output, from this
+# build's point of view: it's bundled on the host before `docker build`
+# runs (see enclave/Makefile), since StageX's core-nodejs has no npm to run
+# `pnpm bundle` inside the container.
+!apps/executor/dist
+!apps/executor/dist/**
+**/.turbo
+enclave/out
+enclave/src/nautilus-server/target
+fixtures
+docs
+*.md
