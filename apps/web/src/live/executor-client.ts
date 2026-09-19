@@ -321,7 +321,13 @@ export class ExecutorClient {
 
   constructor(input: { baseUrl: string; fetch?: FetchLike; now?: () => number }) {
     this.#baseUrl = input.baseUrl;
-    this.#fetch = input.fetch ?? globalThis.fetch;
+    // Must be bound: postJson calls this as `input.fetch(...)`, i.e. as a
+    // method of its options object, so an unbound window.fetch gets
+    // `this === thatObject` and the browser rejects it with "Illegal
+    // invocation". That TypeError surfaced as EXECUTOR_UNREACHABLE
+    // ("로컬 executor에 연결하지 못했습니다") even with the executor healthy.
+    // Unit tests never hit this path because they always inject a fake fetch.
+    this.#fetch = input.fetch ?? globalThis.fetch.bind(globalThis);
     this.#now = input.now ?? Date.now;
   }
 
