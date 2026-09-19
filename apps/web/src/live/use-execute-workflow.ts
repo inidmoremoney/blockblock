@@ -10,13 +10,13 @@ import {
   verifyExecutionContent,
   verifyExecutionReceipt,
 } from "./executor-client";
-import type { OwnedLicense, OwnedReceipt } from "./sui-objects";
-import { findOwnedLicense, findRecordedReceipt } from "./sui-objects";
+import type { OwnedLicense } from "./sui-objects";
+import { findOwnedLicense } from "./sui-objects";
 import {
   buildCreateExecutionRequestTransaction,
   buildRecordReceiptTransaction,
 } from "./transactions";
-import { findCreatedObject } from "./tx-effects";
+import { executeSignedTransaction, requireCreated } from "./execute-signed";
 
 export type ExecuteStep =
   | "idle"
@@ -44,11 +44,34 @@ const STEP_LABEL: Partial<Record<ExecuteStep, string>> = {
   verifying: "실행 결과와 영수증을 검증하는 중…",
 };
 
-export const RECORD_STATUS_LABEL: Partial<Record<RecordStatus, string>> = {
-  opening_request: "온체인 실행 요청을 여는 중… (지갑 서명 1/2)",
-  signing: "실행 기록을 남기는 중… (지갑 서명 2/2)",
-  confirming: "체인에서 기록이 확정되기를 기다리는 중…",
-};
+/**
+ * Recording normally needs two signatures, but a retry that reuses a request
+ * already opened needs only the second. The counter has to follow that or it
+ * promises a wallet prompt that never comes.
+ */
+export function recordStatusLabelFor(
+  status: RecordStatus,
+  signatures: 1 | 2,
+): string | undefined {
+  if (status === "opening_request") {
+    return "온체인 실행 요청을 여는 중… (지갑 서명 1/2)";
+  }
+  if (status === "signing") {
+    return signatures === 2
+      ? "실행 기록을 남기는 중… (지갑 서명 2/2)"
+      : "실행 기록을 남기는 중… (지갑 서명)";
+  }
+  if (status === "confirming") {
+    return "체인에서 기록이 확정되기를 기다리는 중…";
+  }
+  return undefined;
+}
+
+/*
+ * The contract gives an ExecutionRequest ten minutes; stopping a minute short
+ * keeps a reused one from expiring midway through the second signature.
+ */
+const REQUEST_REUSE_WINDOW_MS = 9 * 60 * 1000;
 
 function decodeBase64(value: string): Uint8Array {
   const binary = atob(value);
@@ -89,8 +112,19 @@ export function useExecuteWorkflow() {
   const [execution, setExecution] = useState<ExecutionResponse | undefined>(undefined);
   const [receipt, setReceipt] = useState<VerifiedReceipt | undefined>(undefined);
   const [license, setLicense] = useState<OwnedLicense | undefined>(undefined);
-  const [recorded, setRecorded] = useState<OwnedReceipt | undefined>(undefined);
+  // The id of the receipt this run wrote, not "some receipt for this release".
+  // Receipts on chain carry no execution identity, so an older one says nothing
+  // about whether the execution on screen has been recorded.
+  const [recorded, setRecorded] = useState<string | undefined>(undefined);
   const [recordStatus, setRecordStatus] = useState<RecordStatus>("idle");
+  // Kept across attempts on purpose. Recording needs two wallet signatures and
+  // the zkLogin prover fails on the second when both are asked for back to
+  // back, so a retry should reuse the request the first attempt already paid
+  // for rather than open another one.
+  const [openRequest, setOpenRequest] = useState<
+    { id: string; expiresAtMs: number } | undefined
+  >(undefined);
+  const [recordSignatures, setRecordSignatures] = useState<1 | 2>(2);
 
   const ready =
     account !== null &&
@@ -118,6 +152,10 @@ export function useExecuteWorkflow() {
     setReceipt(undefined);
     setRecorded(undefined);
     setRecordStatus("idle");
+    // The open request is deliberately kept across runs. It is bound to the
+    // licence and release, not to one execution, so a request already paid for
+    // stays usable and the next record attempt costs one signature instead of
+    // two.
 
     try {
       setStep("checking_license");
@@ -190,17 +228,8 @@ export function useExecuteWorkflow() {
         expectedLicenseId: owned.id,
         expectedRunner: account.address,
       });
-      const already = await findRecordedReceipt({
-        client,
-        packageId: webConfig.packageId,
-        owner: account.address,
-        releaseId: release.id,
-      });
-
       setExecution(response);
       setReceipt(verified);
-      setRecorded(already);
-      setRecordStatus(already === undefined ? "idle" : "recorded");
       setStep("done");
     } catch (cause) {
       setError(messageFor(cause));
@@ -228,26 +257,37 @@ export function useExecuteWorkflow() {
       return;
     }
     setError(undefined);
-    setRecordStatus("opening_request");
     try {
-      const opened = await dAppKit.signAndExecuteTransaction({
-        transaction: buildCreateExecutionRequestTransaction({
-          packageId: webConfig.packageId,
-          licenseId: license.id,
-          releaseId: release.id,
-        }),
-        account,
-        network: "testnet",
-      });
-      if (opened.$kind !== "Transaction") throw new Error("실행 요청 거래가 완료되지 않았습니다.");
-      const requestId = await findCreatedObject({
-        client,
-        digest: opened.Transaction.digest,
-        type: `${webConfig.packageId}::execution::ExecutionRequest`,
-      });
+      const reusable =
+        openRequest !== undefined && openRequest.expiresAtMs > Date.now()
+          ? openRequest.id
+          : undefined;
+
+      let requestId: string;
+      setRecordSignatures(reusable === undefined ? 2 : 1);
+      if (reusable === undefined) {
+        setRecordStatus("opening_request");
+        const openSigned = await dAppKit.signTransaction({
+          transaction: buildCreateExecutionRequestTransaction({
+            packageId: webConfig.packageId,
+            licenseId: license.id,
+            releaseId: release.id,
+          }),
+          account,
+          network: "testnet",
+        });
+        const opened = await executeSignedTransaction({ client, signed: openSigned });
+        requestId = requireCreated(
+          opened,
+          `${webConfig.packageId}::execution::ExecutionRequest`,
+        );
+        setOpenRequest({ id: requestId, expiresAtMs: Date.now() + REQUEST_REUSE_WINDOW_MS });
+      } else {
+        requestId = reusable;
+      }
 
       setRecordStatus("signing");
-      const result = await dAppKit.signAndExecuteTransaction({
+      const recordSigned = await dAppKit.signTransaction({
         transaction: buildRecordReceiptTransaction({
           packageId: webConfig.packageId,
           licenseId: license.id,
@@ -258,19 +298,25 @@ export function useExecuteWorkflow() {
         account,
         network: "testnet",
       });
-      if (result.$kind !== "Transaction") throw new Error("영수증 기록 거래가 완료되지 않았습니다.");
+      const recordExecuted = await executeSignedTransaction({ client, signed: recordSigned });
+      // The request is spent the moment this lands. Dropping it here rather
+      // than after the lookup below matters: if the lookup fails, a retry that
+      // still held this id would abort with "request already claimed" and the
+      // real reason — a record that already succeeded — would stay hidden.
+      setOpenRequest(undefined);
 
       setRecordStatus("confirming");
-      const found = await findRecordedReceipt({
-        client,
-        packageId: webConfig.packageId,
-        owner: account.address,
-        releaseId: release.id,
-      });
-      if (found === undefined) throw new Error("기록된 영수증을 아직 확인하지 못했습니다.");
-      setRecorded(found);
+      // The effects name the receipt this transaction created, so there is
+      // nothing to look up and nothing to wait for indexing on.
+      setRecorded(
+        requireCreated(recordExecuted, `${webConfig.packageId}::execution::ExecutionReceipt`),
+      );
       setRecordStatus("recorded");
     } catch (cause) {
+      // The UI only ever shows a flattened message. Recording spans two wallet
+      // round trips, so when it breaks the stack is the only thing that says
+      // which of them broke — print the original rather than lose it.
+      console.error("[record] failed:", cause);
       setError(messageFor(cause));
       setRecordStatus("error");
     }
@@ -286,7 +332,7 @@ export function useExecuteWorkflow() {
     receipt,
     recorded,
     recordStatus,
-    recordStatusLabel: RECORD_STATUS_LABEL[recordStatus],
+    recordStatusLabel: recordStatusLabelFor(recordStatus, recordSignatures),
     run,
     record,
   };

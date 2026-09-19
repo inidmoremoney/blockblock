@@ -66,9 +66,13 @@ export const executionResponseSchema = z.strictObject({
     outputHash: hashSchema,
   }),
   trace: z.array(
+    // Mirrors the executor's own trace union. An unknown value fails the whole
+    // response, so this has to include steps the Seal-enabled executor emits
+    // even though the LocalDemoKeyProvider path never reaches them.
     z.enum([
       "WALLET_SIGNATURE_VERIFIED",
       "LICENSE_VERIFIED",
+      "SEAL_SESSION_VERIFIED",
       "WALRUS_BLOB_VERIFIED",
       "BUNDLE_DECRYPTED_LOCAL_SERVER",
       "RSS_FETCHED",
@@ -273,8 +277,14 @@ async function postJson(input: {
 }): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), input.timeoutMs);
+  // Pulled into a local before calling. `input.fetch(...)` would run fetch as a
+  // method of this options object, and the browser's fetch refuses any `this`
+  // that is not the window: it throws "Illegal invocation", which this function
+  // then reports as an unreachable executor. Node's fetch does not care, so
+  // tests and the CLI script never saw it.
+  const doFetch = input.fetch;
   try {
-    const response = await input.fetch(input.url, {
+    const response = await doFetch(input.url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input.body),
@@ -321,12 +331,6 @@ export class ExecutorClient {
 
   constructor(input: { baseUrl: string; fetch?: FetchLike; now?: () => number }) {
     this.#baseUrl = input.baseUrl;
-    // Must be bound: postJson calls this as `input.fetch(...)`, i.e. as a
-    // method of its options object, so an unbound window.fetch gets
-    // `this === thatObject` and the browser rejects it with "Illegal
-    // invocation". That TypeError surfaced as EXECUTOR_UNREACHABLE
-    // ("로컬 executor에 연결하지 못했습니다") even with the executor healthy.
-    // Unit tests never hit this path because they always inject a fake fetch.
     this.#fetch = input.fetch ?? globalThis.fetch.bind(globalThis);
     this.#now = input.now ?? Date.now;
   }
