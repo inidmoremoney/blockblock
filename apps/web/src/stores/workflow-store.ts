@@ -19,6 +19,17 @@ export type Workflow = {
   workflowType?: string;
   /** Registered through the browser: real on-chain listing, but no bundle to run. */
   onChainOnly?: boolean;
+  /**
+   * What the workflow does, as three or four stages. Drawn on the detail page
+   * so a listing reads as a pipeline rather than a name and a price.
+   */
+  steps?: string[];
+  /**
+   * The workflow whose output this one builds on. A fork consumes the original
+   * result, not its prompt or internal steps, so the original stays private
+   * while its output becomes material for someone else.
+   */
+  forkedFrom?: string;
 };
 
 export type PurchasedWorkflow = {
@@ -66,6 +77,7 @@ const GOOGLE_NEWS_WORKFLOW: Workflow = {
   id: "google-news-rss",
   // Curated title. The WorkflowRoot on chain calls it "Google News RSS".
   name: "Google News RSS Monitor",
+  steps: ["검색어 입력", "Google News 수집", "중복 제거 · 최신순", "기사 10건"],
   // Fallback only: price_license on the deployed WorkflowRelease (0.05 SUI).
   // The live loader overwrites this with whatever the chain actually says.
   priceMist: 50_000_000,
@@ -83,10 +95,62 @@ const GOOGLE_NEWS_WORKFLOW: Workflow = {
   workflowType: "google_news_rss/v1",
 };
 
+const FORKED_WORKFLOWS: Workflow[] = [
+  {
+    id: "economic-impact-analyst",
+    name: "Economic Impact Analyst",
+    forkedFrom: "google-news-rss",
+    steps: ["뉴스 결과 수신", "언급 자산 식별", "긍정 · 부정 요인 분리", "시장 영향 판정"],
+    priceMist: 800000000,
+    users: 74,
+    likes: 31,
+    creator: "0x5b2e…91c7",
+    lastUpdate: "2 days ago",
+    description:
+      "Google News RSS Monitor가 내놓은 기사 목록을 받아, 거기 언급된 자산의 시장 영향도를 따집니다. 원본 워크플로의 프롬프트는 보지 않고 결과만 재료로 씁니다.",
+    category: "featured",
+    icon: "📈",
+    accent: "from-mint/60 to-lime/40",
+  },
+  {
+    id: "supply-chain-analyst",
+    name: "Supply Chain Analyst",
+    forkedFrom: "google-news-rss",
+    steps: ["뉴스 결과 수신", "기업 · 부품 추출", "의존 관계 매핑", "병목 위험 산출"],
+    priceMist: 700000000,
+    users: 52,
+    likes: 24,
+    creator: "0xa71d…4e60",
+    lastUpdate: "2 days ago",
+    description:
+      "같은 뉴스 결과를 공급망 관점으로 다시 읽습니다. 어떤 기업이 어디에 묶여 있는지, 병목이 생길 지점이 어디인지 정리합니다.",
+    category: "featured",
+    icon: "🏭",
+    accent: "from-blue/60 to-mint/40",
+  },
+  {
+    id: "ai-morning-brief",
+    name: "AI Morning Brief",
+    forkedFrom: "google-news-rss",
+    steps: ["뉴스 결과 수신", "중요도 순 정렬", "핵심 3건 선별", "한 줄 브리핑"],
+    priceMist: 400000000,
+    users: 138,
+    likes: 66,
+    creator: "0x3d94…c2b8",
+    lastUpdate: "1 day ago",
+    description:
+      "뉴스 결과를 아침에 읽기 좋은 길이로 줄입니다. 오늘 꼭 알아야 할 세 건과 한 줄 요약만 남깁니다.",
+    category: "featured",
+    icon: "☀️",
+    accent: "from-lime/50 to-blue/40",
+  },
+];
+
 const FEATURED_WORKFLOWS: Workflow[] = [
   {
     id: "github-pr-digest",
     name: "PR Review Digest",
+    steps: ["PR 열림 감지", "변경 파일 분석", "리뷰 포인트 정리", "Slack 알림"],
     priceMist: 1200000000,
     users: 218,
     likes: 94,
@@ -101,6 +165,7 @@ const FEATURED_WORKFLOWS: Workflow[] = [
   {
     id: "invoice-parser",
     name: "Invoice Extractor",
+    steps: ["청구서 PDF 업로드", "금액 · 날짜 추출", "항목 검증", "회계 시트 기록"],
     priceMist: 1800000000,
     users: 176,
     likes: 71,
@@ -115,6 +180,7 @@ const FEATURED_WORKFLOWS: Workflow[] = [
   {
     id: "meeting-notes",
     name: "Meeting Recap",
+    steps: ["회의 녹음 입력", "음성 텍스트 변환", "결정 · 할 일 분리", "요약 메일 발송"],
     priceMist: 900000000,
     users: 412,
     likes: 155,
@@ -129,6 +195,7 @@ const FEATURED_WORKFLOWS: Workflow[] = [
   {
     id: "token-price-alert",
     name: "Token Watchlist",
+    steps: ["관심 토큰 등록", "가격 · 거래량 수집", "임계값 비교", "이상 감지 알림"],
     priceMist: 600000000,
     users: 289,
     likes: 103,
@@ -146,6 +213,7 @@ const TRENDING_WORKFLOWS: Workflow[] = [
   {
     id: "resume-screener",
     name: "Resume Screener",
+    steps: ["채용 공고 기준 설정", "이력서 일괄 파싱", "요건 매칭 점수화", "상위 후보 정리"],
     priceMist: 1500000000,
     users: 531,
     likes: 214,
@@ -161,6 +229,7 @@ const TRENDING_WORKFLOWS: Workflow[] = [
   {
     id: "competitor-watch",
     name: "Competitor Watch",
+    steps: ["경쟁사 목록 지정", "공개 채널 수집", "변화 지점 추출", "주간 리포트"],
     priceMist: 2200000000,
     users: 468,
     likes: 187,
@@ -176,6 +245,7 @@ const TRENDING_WORKFLOWS: Workflow[] = [
   {
     id: "ticket-router",
     name: "Support Triage",
+    steps: ["문의 접수", "의도 · 긴급도 분류", "담당 큐 배정", "초안 답변 생성"],
     priceMist: 1100000000,
     users: 403,
     likes: 169,
@@ -191,6 +261,7 @@ const TRENDING_WORKFLOWS: Workflow[] = [
   {
     id: "review-digest",
     name: "Review Digest",
+    steps: ["리뷰 수집", "긍정 · 부정 분리", "반복 키워드 집계", "개선 항목 요약"],
     priceMist: 800000000,
     users: 377,
     likes: 141,
@@ -206,6 +277,7 @@ const TRENDING_WORKFLOWS: Workflow[] = [
   {
     id: "sentiment-tracker",
     name: "Sentiment Tracker",
+    steps: ["대상 키워드 설정", "언급 수집", "감성 점수 산출", "추세 그래프"],
     priceMist: 1400000000,
     users: 342,
     likes: 128,
@@ -221,6 +293,7 @@ const TRENDING_WORKFLOWS: Workflow[] = [
   {
     id: "seo-keyword-report",
     name: "Keyword Report",
+    steps: ["시드 키워드 입력", "검색량 · 경쟁도 조회", "묶음 클러스터링", "우선순위 표"],
     priceMist: 1700000000,
     users: 298,
     likes: 112,
@@ -236,6 +309,7 @@ const TRENDING_WORKFLOWS: Workflow[] = [
   {
     id: "standup-bot",
     name: "Standup Collector",
+    steps: ["팀원에게 질문 발송", "응답 취합", "차단 요인 표시", "스탠드업 요약"],
     priceMist: 500000000,
     users: 264,
     likes: 96,
@@ -251,6 +325,7 @@ const TRENDING_WORKFLOWS: Workflow[] = [
   {
     id: "contract-risk",
     name: "Contract Reader",
+    steps: ["계약서 업로드", "조항 단위 분해", "위험 조항 표시", "검토 노트"],
     priceMist: 2500000000,
     users: 231,
     likes: 88,
@@ -266,6 +341,7 @@ const TRENDING_WORKFLOWS: Workflow[] = [
   {
     id: "translation-pipeline",
     name: "Doc Translator",
+    steps: ["문서 업로드", "구조 유지 번역", "용어집 적용", "번역본 내려받기"],
     priceMist: 1300000000,
     users: 205,
     likes: 79,
@@ -281,6 +357,7 @@ const TRENDING_WORKFLOWS: Workflow[] = [
   {
     id: "filing-digest",
     name: "Filing Digest",
+    steps: ["공시 감시", "본문 · 첨부 파싱", "핵심 변경 추출", "요약 알림"],
     priceMist: 2100000000,
     users: 188,
     likes: 64,
@@ -297,6 +374,8 @@ const TRENDING_WORKFLOWS: Workflow[] = [
 
 const MOCK_WORKFLOWS: Workflow[] = [
   GOOGLE_NEWS_WORKFLOW,
+  // Right after the workflow they build on, so the catalog reads as a lineage.
+  ...FORKED_WORKFLOWS,
   ...FEATURED_WORKFLOWS,
   ...TRENDING_WORKFLOWS,
 ];
@@ -305,7 +384,12 @@ let commentId = 0;
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   workflows: MOCK_WORKFLOWS,
-  purchasedWorkflows: [],
+  // Starts out owned so the fork story can be shown without buying anything:
+  // this listing has no bundle behind it, so a purchase would be theatre. Its
+  // execute screen presents a saved result rather than running anything.
+  purchasedWorkflows: [
+    { workflowId: "ai-morning-brief", purchasedAt: "2026-09-19T08:40:00.000Z" },
+  ],
   likedWorkflowIds: [],
   comments: [],
   addWorkflow: (workflow: Workflow) =>

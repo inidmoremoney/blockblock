@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useCurrentAccount } from "@mysten/dapp-kit-react";
-import { Check, ExternalLink, Play, ShieldCheck } from "lucide-react";
+import { Check, ExternalLink, History, Play, RefreshCw, ShieldCheck, X } from "lucide-react";
 
+import { BriefResult } from "../components/BriefResult";
 import { WorkflowThumbnail } from "../components/WorkflowThumbnail";
 import { LIVE_WORKFLOW_ID } from "../live/live-release";
+import { listExecutionHistory } from "../live/execution-history";
 import { useExecuteWorkflow } from "../live/use-execute-workflow";
 import { useWorkflowStore } from "../stores/workflow-store";
 
@@ -36,6 +38,27 @@ export default function Execute() {
   }
 
   const runnable = workflow.id === LIVE_WORKFLOW_ID;
+
+  // The forked brief has no bundle, so its screen shows a saved run instead of
+  // offering to start one. Its headlines come from the original workflow's last
+  // real result when this browser has one, because a fork is built out of the
+  // original's output — showing that literally is stronger than describing it.
+  const BRIEF_ID = "ai-morning-brief";
+  const FALLBACK_STORIES = [
+    "NVIDIA, AI 데이터센터 수요로 GPU 주문 급증",
+    "미국, 첨단 반도체 수출 규제 추가 검토",
+    "TSMC·SK하이닉스, HBM 생산능력 확대 논의",
+  ];
+  const savedBrief = useMemo(() => {
+    if (workflow?.id !== BRIEF_ID) return undefined;
+    const latest =
+      account === null ? undefined : listExecutionHistory(account.address)[0];
+    const titles = latest?.response.result.items.slice(0, 3).map((item) => item.title);
+    return {
+      topStories: titles !== undefined && titles.length > 0 ? titles : FALLBACK_STORIES,
+      executedAtMs: latest?.executedAtMs ?? Date.parse("2026-09-19T08:42:00.000Z"),
+    };
+  }, [workflow?.id, account]);
   const trimmed = query.trim();
   const queryLength = Array.from(trimmed).length;
   const queryValid = queryLength >= 2 && queryLength <= 200;
@@ -55,7 +78,14 @@ export default function Execute() {
           </div>
         </div>
 
-        {!runnable ? (
+        {savedBrief !== undefined ? (
+          <Panel>
+            <BriefResult
+              topStories={savedBrief.topStories}
+              executedAtMs={savedBrief.executedAtMs}
+            />
+          </Panel>
+        ) : !runnable ? (
           <Panel>
             <p className="text-sm text-muted">
               {workflow.onChainOnly === true
@@ -108,6 +138,70 @@ export default function Execute() {
                 </p>
               )}
 
+              {/* Two ways back to an earlier search: the stored result, which
+                  needs no signature and no executor, or the same query run
+                  again for current news. Typing it out a second time is the
+                  only thing being saved either way. */}
+              {execute.history.length > 0 && !execute.busy && (
+                <div className="mt-5 border-t border-line pt-4">
+                  <p className="flex items-center gap-2 text-xs text-muted">
+                    <History className="h-3.5 w-3.5" aria-hidden="true" />
+                    이전 검색어
+                  </p>
+                  <ul className="mt-3 flex flex-col gap-2">
+                    {execute.history.map((entry) => (
+                      <li
+                        key={entry.response.executionId}
+                        className="flex items-center gap-2 rounded-xl border border-line px-3 py-2"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => void execute.replay(entry)}
+                          title="저장된 결과를 다시 봅니다. 지갑 서명이 필요 없습니다."
+                          className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left text-sm hover:text-mint"
+                        >
+                          <span className="truncate">{entry.response.input.query}</span>
+                          <span className="flex-shrink-0 text-xs text-muted">
+                            {entry.response.result.items.length}건 ·{" "}
+                            {new Date(entry.executedAtMs).toLocaleString("ko-KR", {
+                              month: "numeric",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQuery(entry.response.input.query);
+                            void execute.run(entry.response.input.query);
+                          }}
+                          title="같은 검색어로 지금 다시 실행합니다. 지갑 서명이 한 번 필요합니다."
+                          className="flex flex-shrink-0 items-center gap-1 rounded-lg border border-line px-2.5 py-1.5 text-xs text-muted hover:border-mint hover:text-mint"
+                        >
+                          <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                          최신으로
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => execute.forget(entry.response.executionId)}
+                          aria-label={`${entry.response.input.query} 기록 삭제`}
+                          title="이 기록만 지웁니다. 체인에 남은 실행 기록과는 무관합니다."
+                          className="flex flex-shrink-0 items-center justify-center rounded-lg border border-line p-1.5 text-muted hover:border-red-500/50 hover:text-red-400"
+                        >
+                          <X className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-xs text-muted">
+                    검색어를 누르면 저장된 결과가, &lsquo;최신으로&rsquo;를 누르면
+                    지금 기준 뉴스가 나옵니다.
+                  </p>
+                </div>
+              )}
+
               {execute.error !== undefined && (
                 <p className="mt-4 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">
                   {execute.error}
@@ -118,8 +212,22 @@ export default function Execute() {
             {execute.execution !== undefined && (
               <Panel>
                 <h2 className="text-lg font-semibold mb-1">실행 결과</h2>
+                {/* News always looks current, so a result pulled back from
+                    storage has to say when it was actually fetched. The time
+                    comes from the receipt the executor signed, not from when
+                    this screen happened to render it. */}
                 <p className="text-xs text-muted mb-4">
-                  &lsquo;{execute.execution.input.query}&rsquo; · {execute.execution.result.items.length}건
+                  &lsquo;{execute.execution.input.query}&rsquo; ·{" "}
+                  {execute.execution.result.items.length}건 ·{" "}
+                  {new Date(
+                    execute.execution.receipt.payload.executedAtMs,
+                  ).toLocaleString("ko-KR", {
+                    month: "numeric",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}{" "}
+                  실행
                 </p>
                 <ul className="flex flex-col gap-3">
                   {execute.execution.result.items.map((item) => (

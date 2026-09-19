@@ -77,6 +77,7 @@ async function main(): Promise<void> {
   })) as unknown as TxEffectsResult;
   const licenseId = findCreatedObjectId(res1, "::license::LicensePass");
   console.log(`LicensePass bought: ${licenseId}`);
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
   // ── Step 2: request an execution challenge from the executor ──
   const challengeRes = await fetch(`${EXECUTOR_BASE_URL}/api/execution/challenges`, {

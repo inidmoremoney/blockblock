@@ -39,6 +39,13 @@ function messageFor(cause: unknown): string {
   return raw;
 }
 
+/*
+ * A listing registered through the browser carries no bundle, so its stages
+ * cannot be read from anywhere. These describe what any workflow on the
+ * marketplace does, which is true of this one too once a bundle is attached.
+ */
+const DEFAULT_STEPS = ["입력값 전달", "워크플로 실행", "결과 반환"];
+
 function shortAddress(value: string): string {
   return `${value.slice(0, 6)}…${value.slice(-4)}`;
 }
@@ -103,6 +110,7 @@ export function useRegisteredWorkflows(): {
             category: "featured" as const,
             icon: "🆕",
             accent: "from-mint/70 to-lime/60",
+            steps: DEFAULT_STEPS,
             // No bundle behind a browser registration, so it cannot be executed.
             onChainOnly: true,
           }));
@@ -134,11 +142,17 @@ export function useRegisterWorkflow() {
   const [status, setStatus] = useState<RegisterStatus>("idle");
   const [error, setError] = useState<string | undefined>(undefined);
   const [rehearsing, setRehearsing] = useState(false);
+  // Surfaced so the success screen can show what the chain actually created.
+  // Without it the only proof of a registration is the word "등록했습니다".
+  const [registered, setRegistered] = useState<
+    { rootId: string; releaseId: string } | undefined
+  >(undefined);
 
   const reset = () => {
     setStatus("idle");
     setError(undefined);
     setRehearsing(false);
+    setRegistered(undefined);
   };
 
   const rehearse = async () => {
@@ -163,6 +177,7 @@ export function useRegisterWorkflow() {
     }
     setError(undefined);
     setRehearsing(false);
+    setRegistered(undefined);
 
     const packageId = webConfig.packageId;
     const owner = account.address;
@@ -193,6 +208,7 @@ export function useRegisterWorkflow() {
       const rootId = requireCreated(executed, `${packageId}::agent::WorkflowRoot`);
       const releaseId = requireCreated(executed, `${packageId}::agent::WorkflowRelease`);
       rememberRegisteredRelease(owner, { rootId, releaseId });
+      setRegistered({ rootId, releaseId });
 
       setStatus("success");
     } catch (cause) {
@@ -208,6 +224,7 @@ export function useRegisterWorkflow() {
     busy: status === "publishing" || status === "confirming",
     error,
     rehearsing,
+    registered,
     register,
     rehearse,
     reset,

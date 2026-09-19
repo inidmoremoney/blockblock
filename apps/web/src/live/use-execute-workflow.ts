@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useCurrentAccount, useCurrentClient, useCurrentNetwork, useDAppKit } from "@mysten/dapp-kit-react";
 
 import { webConfig } from "./config";
@@ -10,6 +10,12 @@ import {
   verifyExecutionContent,
   verifyExecutionReceipt,
 } from "./executor-client";
+import type { ExecutionHistoryEntry } from "./execution-history";
+import {
+  forgetExecution,
+  listExecutionHistory,
+  rememberExecution,
+} from "./execution-history";
 import type { OwnedLicense } from "./sui-objects";
 import { findOwnedLicense } from "./sui-objects";
 import {
@@ -125,6 +131,12 @@ export function useExecuteWorkflow() {
     { id: string; expiresAtMs: number } | undefined
   >(undefined);
   const [recordSignatures, setRecordSignatures] = useState<1 | 2>(2);
+  const [history, setHistory] = useState<ExecutionHistoryEntry[]>([]);
+
+  const owner = account === null ? undefined : account.address;
+  useEffect(() => {
+    setHistory(owner === undefined ? [] : listExecutionHistory(owner));
+  }, [owner]);
 
   const ready =
     account !== null &&
@@ -228,6 +240,8 @@ export function useExecuteWorkflow() {
         expectedLicenseId: owned.id,
         expectedRunner: account.address,
       });
+      rememberExecution(account.address, response);
+      setHistory(listExecutionHistory(account.address));
       setExecution(response);
       setReceipt(verified);
       setStep("done");
@@ -322,9 +336,44 @@ export function useExecuteWorkflow() {
     }
   };
 
+  /**
+   * Shows a stored run again. The receipt is re-checked locally rather than
+   * trusted from storage, so a tampered entry cannot put a forged receipt on
+   * screen. Nothing is sent to the executor and no signature is asked for.
+   */
+  const replay = async (entry: ExecutionHistoryEntry) => {
+    if (account === null || release === undefined) return;
+    setError(undefined);
+    setRecorded(undefined);
+    setRecordStatus("idle");
+    try {
+      const verified = await verifyExecutionReceipt({
+        receipt: entry.response.receipt,
+        expectedReleaseId: entry.response.receipt.payload.releaseId,
+        expectedLicenseId: entry.response.receipt.payload.licenseId,
+        expectedRunner: account.address,
+      });
+      setExecution(entry.response);
+      setReceipt(verified);
+      setStep("done");
+    } catch (cause) {
+      setError(messageFor(cause));
+      setStep("error");
+    }
+  };
+
+  const forget = (executionId: string) => {
+    if (account === null) return;
+    forgetExecution(account.address, executionId);
+    setHistory(listExecutionHistory(account.address));
+  };
+
   return {
     ready,
     step,
+    history,
+    replay,
+    forget,
     stepLabel: STEP_LABEL[step],
     busy: step !== "idle" && step !== "done" && step !== "error",
     error,
